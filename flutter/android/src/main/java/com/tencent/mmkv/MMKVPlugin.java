@@ -20,6 +20,9 @@
 
 package com.tencent.mmkv;
 
+import android.content.Context;
+import android.content.pm.ApplicationInfo;
+
 import androidx.annotation.NonNull;
 import com.tencent.mmkv.MMKV;
 import io.flutter.embedding.engine.plugins.FlutterPlugin;
@@ -27,7 +30,6 @@ import io.flutter.plugin.common.MethodCall;
 import io.flutter.plugin.common.MethodChannel;
 import io.flutter.plugin.common.MethodChannel.MethodCallHandler;
 import io.flutter.plugin.common.MethodChannel.Result;
-import io.flutter.plugin.common.PluginRegistry.Registrar;
 
 /** MmkvPlugin */
 public class MMKVPlugin implements FlutterPlugin, MethodCallHandler {
@@ -37,10 +39,13 @@ public class MMKVPlugin implements FlutterPlugin, MethodCallHandler {
     /// when the Flutter Engine is detached from the Activity
     private MethodChannel channel;
 
+    private Context context;
+
     @Override
     public void onAttachedToEngine(@NonNull FlutterPluginBinding flutterPluginBinding) {
         channel = new MethodChannel(flutterPluginBinding.getBinaryMessenger(), "mmkv");
         channel.setMethodCallHandler(this);
+        context = flutterPluginBinding.getApplicationContext();
     }
 
     @Override
@@ -50,6 +55,20 @@ public class MMKVPlugin implements FlutterPlugin, MethodCallHandler {
             final int logLevel = call.argument("logLevel");
             final String ret = MMKV.initialize(rootDir, MMKVLogLevel.values()[logLevel]);
             result.success(ret);
+        } else if (call.method.equals("getNativeLibraryDir")) {
+            final ApplicationInfo info = context.getApplicationInfo();
+            if (info != null) {
+                result.success(info.nativeLibraryDir);
+            } else {
+                result.success(null);
+            }
+        } else if (call.method.equals("loadLibrary")) {
+            try {
+                System.loadLibrary((String) (call.arguments));
+                result.success(null);
+            } catch (Throwable e) {
+                result.error("1", "could not load: " + e.toString(), null);
+            }
         } else {
             result.notImplemented();
         }

@@ -22,6 +22,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:ffi'; // For FFI
 import 'dart:io'; // For Platform.isX
+import 'dart:math';
 import 'dart:typed_data';
 
 import 'package:device_info_plus/device_info_plus.dart';
@@ -179,6 +180,8 @@ class MMKV {
       final sdkInt = androidInfo.version.sdkInt ?? 0;
       final cacheDir = await getTemporaryDirectory();
       final cacheDirPtr = _string2Pointer(cacheDir.path);
+      // 增加步骤
+      await getNativeLibraryDir();
 
       _mmkvInitialize!(rootDirPtr, cacheDirPtr, sdkInt, logLevel.index);
 
@@ -191,6 +194,19 @@ class MMKV {
   /// The root directory of MMKV.
   static String get rootDir {
     return _rootDir;
+  }
+
+  /// 获取原生SO库存放路径
+  static Future<String?> getNativeLibraryDir() async {
+    final ret = await _channel.invokeMethod('getNativeLibraryDir');
+    if (ret != null) androidNativeLibraryDir = ret;
+    return ret;
+  }
+
+  /// 原生加载SO库
+  /// fixme 暂时没用
+  static Future<dynamic> loadNativeLibraryInJava(String library) async {
+    return _channel.invokeMethod('loadLibrary', library);
   }
 
   /// A generic purpose instance in single-process mode.
@@ -733,9 +749,43 @@ String _nativeFuncName(String name) {
   return "mmkv_" + name;
 }
 
-final DynamicLibrary _nativeLib = Platform.isAndroid
-    ? DynamicLibrary.open("libmmkv.so")
-    : DynamicLibrary.process();
+/// so文件存放地址
+late final String? androidNativeLibraryDir;
+
+final DynamicLibrary _nativeLib =
+    Platform.isAndroid ? _androidOpen : DynamicLibrary.process();
+
+/// 修复Android <= 6.0 可能会出现so文件无法加载问题
+DynamicLibrary get _androidOpen {
+  try {
+    debugPrint("load libmmkv");
+    return DynamicLibrary.open('libmmkv.so');
+  } catch (_) {
+    debugPrint("fail, trying workarounds...");
+    if (Platform.isAndroid) {
+      try {
+        final lib = DynamicLibrary.open("$androidNativeLibraryDir/libmmkv.so");
+        debugPrint(
+            "successfully loaded mmkv with strange workaround at $androidNativeLibraryDir");
+        return lib;
+      } catch (_) {
+        // On some (especially old) Android devices, we somehow can't dlopen
+        // libraries shipped with the apk. We need to find the full path of the
+        // library (/data/data/<id>/lib/libmmkv.so) and open that one.
+        // For details, see https://github.com/simolus3/moor/issues/420
+        final appIdAsBytes = File('/proc/self/cmdline').readAsBytesSync();
+
+        // app id ends with the first \0 character in here.
+        final endOfAppId = max(appIdAsBytes.indexOf(0), 0);
+        final appId = String.fromCharCodes(appIdAsBytes.sublist(0, endOfAppId));
+
+        return DynamicLibrary.open('/data/data/$appId/lib/libmmkv.so');
+      }
+    }
+
+    rethrow;
+  }
+}
 
 final void Function(Pointer<Utf8> rootDir, Pointer<Utf8> cacheDir, int sdkInt,
         int logLevel)? _mmkvInitialize =
